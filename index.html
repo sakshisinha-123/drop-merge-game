@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Drop & Merge</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:system-ui;
+  background:#020617;
+  color:#e5e7eb;
+  text-align:center;
+}
+button{
+  padding:12px 22px;
+  border:none;
+  border-radius:14px;
+  background:#22c55e;
+  color:#022c22;
+  font-size:16px;
+  cursor:pointer;
+}
+.screen{display:none;min-height:100vh;padding:20px}
+.active{display:block}
+
+/* ---------- FRONT PAGE UI ---------- */
+.hero{
+  max-width:420px;
+  margin:50px auto;
+  padding:30px;
+  border-radius:22px;
+  background:linear-gradient(145deg,#020617,#020617cc);
+  box-shadow:0 0 40px #22c55e33;
+}
+.hero h1{
+  font-size:34px;
+  margin-bottom:6px;
+}
+.tagline{
+  opacity:.7;
+  margin-bottom:25px;
+}
+.rules-card{
+  background:#020617aa;
+  padding:22px;
+  border-radius:16px;
+  text-align:left;
+  margin-bottom:28px;
+}
+.rule{
+  padding:10px 0;
+  border-bottom:1px solid #1e293b;
+  font-size:15px;
+}
+.rule:last-child{border-bottom:none}
+.start-btn{
+  width:100%;
+  font-size:18px;
+  padding:16px;
+  border-radius:16px;
+  background:linear-gradient(135deg,#22c55e,#4ade80);
+  box-shadow:0 0 25px #22c55e66;
+}
+.start-btn:hover{transform:scale(1.03)}
+
+/* ---------- GAME UI ---------- */
+#nextBox{
+  margin:10px auto;
+  width:80px;height:80px;
+  background:#0f172a;
+  border-radius:14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:26px;
+  font-weight:bold;
+}
+#scoreBox{
+  display:flex;
+  justify-content:center;
+  gap:20px;
+  margin-top:10px;
+}
+#grid{
+  width:300px;
+  height:420px;
+  margin:20px auto;
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  grid-template-rows:repeat(7,1fr);
+  gap:6px;
+}
+.cell{
+  background:#1e293b;
+  border-radius:8px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:bold;
+  font-size:18px;
+  user-select:none;
+}
+.n2{background:#22c55e}
+.n4{background:#3b82f6}
+.n8{background:#06b6d4}
+.n16{background:#0ea5e9}
+.n32{background:#6366f1}
+.n64{background:#8b5cf6}
+.n128{background:#a855f7}
+.n256{background:#d946ef}
+.n512{background:#ec4899}
+.n1024{background:#ef4444}
+
+/* ---------- GAME OVER ---------- */
+#overlay{
+  position:fixed;
+  inset:0;
+  background:#020617dd;
+  display:none;
+  align-items:center;
+  justify-content:center;
+}
+#overlay.active{display:flex}
+.box{
+  background:#020617;
+  padding:32px;
+  border-radius:18px;
+}
+</style>
+</head>
+
+<body>
+
+<!-- FRONT PAGE -->
+<div id="home" class="screen active">
+  <div class="hero">
+    <h1>⬇️ Drop & Merge</h1>
+    <p class="tagline">Simple to play. Hard to master.</p>
+
+    <div class="rules-card">
+      <div class="rule">🔢 Numbers fall from top (2 → 64)</div>
+      <div class="rule">➕ Same numbers merge into double</div>
+      <div class="rule">👆 Tap a column or swipe left/right</div>
+      <div class="rule">☠️ Grid full = Game Over</div>
+    </div>
+
+    <button class="start-btn" onclick="startGame()">▶ Start Game</button>
+  </div>
+</div>
+
+<!-- GAME -->
+<div id="game" class="screen">
+  <h2>Next</h2>
+  <div id="nextBox"></div>
+
+  <div id="scoreBox">
+    <div>Score: <span id="score">0</span></div>
+    <div>High: <span id="high">0</span></div>
+  </div>
+
+  <div id="grid"></div>
+</div>
+
+<!-- GAME OVER -->
+<div id="overlay">
+  <div class="box">
+    <h2>☠️ Game Over</h2>
+    <button onclick="restart()">🔁 Restart</button>
+    <button onclick="goHome()">⬅ Back</button>
+  </div>
+</div>
+
+<script>
+/* CONFIG */
+const rows=7, cols=5;
+const startNumbers=[2,4,8,16,32,64];
+
+let grid=[], fallingCol=2, fallingRow=0;
+let fallingValue=2, nextValue=2;
+let maxValue=2;
+let score=0;
+let highScore=parseInt(localStorage.highScore)||0;
+let interval, running=false;
+
+/* SOUND */
+const ctx=new (window.AudioContext||window.webkitAudioContext)();
+function sound(freq,d=0.1){
+  let o=ctx.createOscillator();
+  let g=ctx.createGain();
+  o.connect(g); g.connect(ctx.destination);
+  o.frequency.value=freq;
+  o.start();
+  g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+d);
+}
+function vibrate(ms){navigator.vibrate&&navigator.vibrate(ms)}
+
+/* FLOW */
+function startGame(){
+  home.classList.remove("active");
+  game.classList.add("active");
+  restart();
+}
+function goHome(){
+  overlay.classList.remove("active");
+  game.classList.remove("active");
+  home.classList.add("active");
+}
+function restart(){
+  overlay.classList.remove("active");
+  grid=Array(rows).fill().map(()=>Array(cols).fill(0));
+  score=0; maxValue=2;
+  nextValue=randomStartNumber();
+  spawn();
+  draw();
+  clearInterval(interval);
+  running=true;
+  interval=setInterval(stepDown,600);
+}
+
+/* DROP */
+function randomStartNumber(){
+  return startNumbers[Math.floor(Math.random()*startNumbers.length)];
+}
+function getNextValue(){
+  if(maxValue>=512) return 64;
+  return randomStartNumber();
+}
+function spawn(){
+  fallingRow=0;
+  fallingCol=2;
+  fallingValue=nextValue;
+  nextValue=getNextValue();
+  if(grid[fallingRow][fallingCol]!==0) gameOver();
+}
+function stepDown(){
+  if(!running) return;
+  if(canMove(fallingRow+1,fallingCol)){
+    fallingRow++;
+  }else{
+    place();
+    applyGravity();
+    mergeAll();
+    spawn();
+  }
+  draw();
+}
+function canMove(r,c){
+  if(r>=rows) return false;
+  if(grid[r][c]!==0) return false;
+  return true;
+}
+function place(){
+  grid[fallingRow][fallingCol]=fallingValue;
+  if(fallingValue>maxValue) maxValue=fallingValue;
+  sound(200); vibrate(20);
+}
+
+/* MERGE + GRAVITY */
+function applyGravity(){
+  for(let c=0;c<cols;c++){
+    let stack=[];
+    for(let r=rows-1;r>=0;r--)
+      if(grid[r][c]) stack.push(grid[r][c]);
+    for(let r=rows-1;r>=0;r--)
+      grid[r][c]=stack[rows-1-r]||0;
+  }
+}
+function mergeAll(){
+  let merged;
+  do{
+    merged=false;
+    for(let c=0;c<cols;c++){
+      for(let r=rows-1;r>0;r--){
+        if(grid[r][c] && grid[r][c]===grid[r-1][c]){
+          grid[r][c]*=2;
+          score+=grid[r][c];
+          grid[r-1][c]=0;
+          if(grid[r][c]>maxValue) maxValue=grid[r][c];
+          merged=true;
+          sound(400); vibrate(40);
+        }
+      }
+    }
+    if(merged) applyGravity();
+  }while(merged);
+
+  if(score>highScore){
+    highScore=score;
+    localStorage.highScore=highScore;
+  }
+}
+
+/* DRAW */
+function draw(){
+  gridEl.innerHTML="";
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      let d=document.createElement("div");
+      d.className="cell";
+      let val=grid[r][c];
+      if(r===fallingRow && c===fallingCol) val=fallingValue;
+      if(val){
+        d.textContent=val;
+        d.classList.add("n"+val);
+      }
+      d.onclick=()=>tapColumn(c);
+      gridEl.appendChild(d);
+    }
+  }
+  nextBox.textContent=nextValue;
+  scoreEl.textContent=score;
+  highEl.textContent=highScore;
+}
+
+/* INPUT */
+function tapColumn(c){
+  if(!running) return;
+  fallingCol=c;
+}
+document.addEventListener("keydown",e=>{
+  if(!running) return;
+  if(e.key==="ArrowLeft" && fallingCol>0) fallingCol--;
+  if(e.key==="ArrowRight" && fallingCol<cols-1) fallingCol++;
+});
+let sx=0;
+document.addEventListener("touchstart",e=>{
+  if(!running) return;
+  sx=e.touches[0].clientX;
+});
+document.addEventListener("touchend",e=>{
+  if(!running) return;
+  let dx=e.changedTouches[0].clientX-sx;
+  if(dx>30 && fallingCol<cols-1) fallingCol++;
+  else if(dx<-30 && fallingCol>0) fallingCol--;
+});
+
+/* GAME OVER */
+function gameOver(){
+  running=false;
+  clearInterval(interval);
+  sound(80,0.5); vibrate(200);
+  overlay.classList.add("active");
+}
+
+/* SHORTCUT DOM */
+const home=document.getElementById("home");
+const game=document.getElementById("game");
+const overlay=document.getElementById("overlay");
+const gridEl=document.getElementById("grid");
+const nextBox=document.getElementById("nextBox");
+const scoreEl=document.getElementById("score");
+const highEl=document.getElementById("high");
+</script>
+
+</body>
+      </html>
